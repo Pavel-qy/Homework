@@ -14,7 +14,7 @@ Implement decorator with context manager support for writing execution time to l
 Implement decorator for supressing exceptions. If exception not occure write log to console.
 
 ### Task 7.5
-Implement function for check that number is even, at least 3. Throw different exceptions for this errors. Custom exceptions must be derived from custom base exception(not Base Exception class).
+Implement function for check that number is even and is greater than 2. Throw different exceptions for this errors. Custom exceptions must be derived from custom base exception(not Base Exception class).
 
 ### Task 7.6
 Create console program for proving Goldbach's conjecture. Program accepts number for input and print result. For pressing 'q' program succesfully close. Use function from Task 5.5 for validating input, handle all exceptions and print user friendly output.
