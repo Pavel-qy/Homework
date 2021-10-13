@@ -1,3 +1,4 @@
+import json
 import sys
 import argparse
 import logging
@@ -21,7 +22,7 @@ def parse_arguments():
         action="store_true",
         default=False,
         help="print result as JSON in stdout",
-        dest="json_output"
+        dest="json_converting"
     )
     parser.add_argument(
         "--verbose",
@@ -38,7 +39,7 @@ def parse_arguments():
         dest="limit"
     )
     args = parser.parse_args()
-    return args.source, args.json_output, args.verbose, args.limit
+    return args.source, args.json_converting, args.verbose, args.limit
 
 
 def create_logger(verbose):
@@ -55,7 +56,7 @@ def create_logger(verbose):
 
 
 def get_response(source):
-    log.info(f"Start getting data from '{source}'")
+    log.info(f"Getting data from '{source}'")
     try:
         response = requests.get(source)
     except requests.exceptions.MissingSchema as exc:
@@ -68,42 +69,47 @@ def get_response(source):
 
 
 def is_successful_response(status_code):
-    log.info("Start checking status code")
+    log.info(f"Checking status code '{status_code}'")
     if 199 < status_code < 300:
         return True
 
 
 def get_soup(response):
-    log.info("Start making the soup with 'lxml-xml'")
+    log.info("Making the soup with 'lxml-xml'")
     return BeautifulSoup(response.text, "lxml-xml")
 
 
 def is_rss(soup):
+    log.info("Checking if the soup contains 'RSS'")
     return bool(soup.find("rss"))
 
 
 def get_items(soup):
+    log.info("Getting items from soup")
     return soup.find_all("item")
 
 
-def news_creation(items):
+def create_news(items):
+    log.info("Creating a news list")
     news_list = []
     for item in items:
         one_news = Novelty(item)
         news_list.append(one_news)
+    log.info(f"News added: '{len(news_list)}'")
     return news_list
 
 
 class Novelty:
     def __init__(self, soup_news):
         self.soup_news = soup_news
-        self.title = self.scraping_title()
-        self.category = self.scraping_category()
-        self.date = self.scraping_date()
-        self.source = self.scraping_source()
-        self.link = self.scraping_link()
-        self.description = self.scraping_description()
-        self.urls = self.scraping_urls()
+        self.title = self.scrape_title()
+        self.category = self.scrape_category()
+        self.date = self.scrape_date()
+        self.source = self.scrape_source()
+        self.link = self.scrape_link()
+        self.description = self.scrape_description()
+        self.urls = self.scrape_urls()
+        self.dictionary = self.create_dictionary()
 
     def __str__(self):
         result = f"Title: {self.title}"
@@ -119,35 +125,44 @@ class Novelty:
             result += f"\n[{i + 1}]: {link}"
         return result
 
-    def scraping_title(self):
-        return self.soup_news.find("title").text
-
-    def scraping_category(self):
-        result = self.soup_news.find("category")
-        if result:
-            return result.text
+    def scrape_title(self):
+        title = self.soup_news.find("title")
+        if title:
+            return title.text
         return
 
-    def scraping_date(self):
-        return self.soup_news.find("pubDate").text
-
-    def scraping_source(self):
-        result = self.soup_news.find("source")
-        if result:
-            return result.text
+    def scrape_category(self):
+        category = self.soup_news.find("category")
+        if category:
+            return category.text
         return
 
-    def scraping_link(self):
-        return self.soup_news.find("link").text
+    def scrape_date(self):
+        date = self.soup_news.find("pubDate")
+        if date:
+            return date.text
+        return
 
-    def scraping_description(self):
+    def scrape_source(self):
+        source = self.soup_news.find("source")
+        if source:
+            return source.text
+        return
+
+    def scrape_link(self):
+        link = self.soup_news.find("link")
+        if link:
+            return link.text
+        return
+
+    def scrape_description(self):
         description = self.soup_news.find("description")
         if description:
             description = BeautifulSoup(description.text, "lxml")
             return description.get_text(" ")
         return
 
-    def scraping_urls(self):
+    def scrape_urls(self):
         urls_list = [self.link]
         for tag in self.soup_news.find_all(url=True):
             urls_list.append(tag["url"])
@@ -155,18 +170,41 @@ class Novelty:
         #     urls_list.append(tag["href"])
         return urls_list
 
+    def create_dictionary(self):
+        dictionary = {
+            "title": self.title,
+            "date": self.date,
+            "link": self.link,
+            "links": self.urls,
+        }
+        if self.source:
+            dictionary["source"] = self.source
+        if self.category:
+            dictionary["category"] = self.category
+        if self.description:
+            dictionary["description"] = self.description
+        return dictionary
 
-def print_news(news, limit):
+
+def create_json(news_list, limit):
+    log.info("Converting news to JSON")
+    news_dictionaries = [one_news.dictionary for one_news in news_list]
+    return json.dumps(news_dictionaries[:limit], ensure_ascii=False, indent=4)
+
+
+def print_news(news, limit, soup):
+    log.info(f"Printing news: '{limit}'")
+    print(f"\nFeed: {soup.find('title').text}")
     for one_news in news[:limit]:
         print("\n", one_news, "\n", sep="")
 
 
 def main():
     sys.tracebacklimit = 0
-    source, json_output, verbose, limit = parse_arguments()
+    source, json_converting, verbose, limit = parse_arguments()
     global log
     log = create_logger(verbose)
-    log.debug(f"Program received: {source=} {json_output=} {verbose=} {limit=}")
+    log.debug(f"Program received: {source=} {json_converting=} {verbose=} {limit=}")
     response = get_response(source)
     if not is_successful_response(response.status_code):
         log.error("Exception occurred 'requests.exceptions.HTTPError'")
@@ -178,9 +216,13 @@ def main():
         log.error("Exception occurred 'requests.exceptions.InvalidURL'")
         raise requests.exceptions.InvalidURL(f"'{source}' does not contain web feed RSS")
     items = get_items(soup)
-    news_list = news_creation(items)
-    print(f"Feed: {soup.find('title').text}")
-    print_news(news_list, limit)
+    news_list = create_news(items)
+    if json_converting:
+        json_news = create_json(news_list, limit)
+        log.info("Print news as JSON")
+        print(json_news)
+    else:
+        print_news(news_list, limit, soup)
 
 
 if __name__ == "__main__":
