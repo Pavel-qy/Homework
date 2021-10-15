@@ -14,8 +14,9 @@ def parse_arguments():
     )
     parser.add_argument(
         "--version",
-        default="0.1",
-        help="print version info"  # doesn't work
+        action="version",
+        version=f"'Version 0.2.0'",
+        help="print version info"
     )
     parser.add_argument(
         "--json",
