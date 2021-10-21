@@ -3,7 +3,10 @@ import sys
 import argparse
 import logging
 import requests
-from bs4 import BeautifulSoup
+import os
+import re
+import datetime as dt
+from bs4 import BeautifulSoup, element
 
 
 def parse_arguments():
@@ -15,14 +18,14 @@ def parse_arguments():
     parser.add_argument(
         "--version",
         action="version",
-        version=f"'Version 0.2.0'",
-        help="print version info"
+        version=f"'Version 0.3.0'",
+        help="prints version info"
     )
     parser.add_argument(
         "--json",
         action="store_true",
         default=False,
-        help="print result as JSON in stdout",
+        help="prints result as JSON in stdout",
         dest="json_converting"
     )
     parser.add_argument(
@@ -39,8 +42,13 @@ def parse_arguments():
         help="limit news topics if this parameter provided",
         dest="limit"
     )
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="prints cached news for specified date"
+    )
     args = parser.parse_args()
-    return args.source, args.json_converting, args.verbose, args.limit
+    return args.source, args.json_converting, args.verbose, args.limit, args.date
 
 
 def create_logger(verbose):
@@ -56,6 +64,25 @@ def create_logger(verbose):
     return logger
 
 
+def is_date_valid(date):
+    log.info("Date validation")
+    try:
+        dt.datetime.strptime(date, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
+
+
+def get_path(source):
+    log.info("Getting path of directories")
+    return os.path.join("cache", re.findall(r"(?<=//)\S+?(?=/)", source)[0])
+
+
+def is_date(source, date):
+    path = get_path(source)
+    return os.path.exists(os.path.join(path, f"{date}.json"))
+
+
 def get_response(source):
     log.info(f"Getting data from '{source}'")
     try:
@@ -69,7 +96,7 @@ def get_response(source):
     return response
 
 
-def is_successful_response(status_code):
+def is_response_successful(status_code):
     log.info(f"Checking status code '{status_code}'")
     if 199 < status_code < 300:
         return True
@@ -90,82 +117,92 @@ def get_items(soup):
     return soup.find_all("item")
 
 
-def create_news(items):
-    log.info("Creating a news list")
-    news_list = []
-    for item in items:
-        one_news = Novelty(item)
-        news_list.append(one_news)
-    log.info(f"News added: '{len(news_list)}'")
-    return news_list
+def create_news(objects_list):
+    log.info("Creating list of Novelty objects")
+    news = []
+    if isinstance(objects_list[0], element.Tag):
+        for item in objects_list:
+            one_news = Novelty(item)
+            news.append(one_news)
+    elif isinstance(objects_list[0], dict):
+        for dct in objects_list:
+            one_news = Novelty(**dct)
+            news.append(one_news)
+    log.info(f"Number of objects: '{len(news)}'")
+    return news
 
 
 class Novelty:
-    def __init__(self, soup_news):
-        self.soup_news = soup_news
-        self.title = self.scrape_title()
-        self.category = self.scrape_category()
-        self.date = self.scrape_date()
-        self.source = self.scrape_source()
-        self.link = self.scrape_link()
-        self.description = self.scrape_description()
-        self.urls = self.scrape_urls()
-        self.dictionary = self.create_dictionary()
+    def __init__(self, item=None, **kwargs):
+        if item:
+            self.item = item
+            self.title = self.scrape_title()
+            self.link = self.scrape_link()
+            self.description = self.scrape_description()
+            self.category = self.scrape_category()
+            self.date = self.scrape_date()
+            self.source = self.scrape_source()
+            self.urls = self.scrape_urls()
+            self.dictionary = self.create_dictionary()
+        elif kwargs:
+            self.title = kwargs["title"]
+            self.link = kwargs["link"]
+            self.description = kwargs["description"]
+            self.category = kwargs["category"]
+            self.date = kwargs["date"]
+            self.source = kwargs["source"]
+            self.urls = kwargs["links"]
 
     def __str__(self):
         result = f"Title: {self.title}"
         if self.source:
             result += f"\nSource: {self.source}"
-        result += f"\nDate: {self.date}\nLink: {self.link}"
+        if self.date:
+            result += f"\nDate: {self.date}"
+        result += f"\nLink: {self.link}"
         if self.category:
             result += f"\nCategory: {self.category}"
         if self.description:
             result += f"\n\nDescription: {self.description}"
-        result += f"\n\nLinks:"
+        result += "\n\nLinks:"
         for i, link in enumerate(self.urls):
             result += f"\n[{i + 1}]: {link}"
         return result
 
     def scrape_title(self):
-        title = self.soup_news.find("title")
-        if title:
-            return title.text
+        return self.item.find("title").text
+
+    def scrape_link(self):
+        return self.item.find("link").text
+
+    def scrape_description(self):
+        description = self.item.find("description")
+        if description:
+            description = BeautifulSoup(description.text, "lxml")
+            return description.get_text("\n", strip=True)
         return
 
     def scrape_category(self):
-        category = self.soup_news.find("category")
+        category = self.item.find("category")
         if category:
             return category.text
         return
 
     def scrape_date(self):
-        date = self.soup_news.find("pubDate")
+        date = self.item.find("pubDate")
         if date:
             return date.text
         return
 
     def scrape_source(self):
-        source = self.soup_news.find("source")
+        source = self.item.find("source")
         if source:
             return source.text
         return
 
-    def scrape_link(self):
-        link = self.soup_news.find("link")
-        if link:
-            return link.text
-        return
-
-    def scrape_description(self):
-        description = self.soup_news.find("description")
-        if description:
-            description = BeautifulSoup(description.text, "lxml")
-            return description.get_text(" ")
-        return
-
     def scrape_urls(self):
         urls_list = [self.link]
-        for tag in self.soup_news.find_all(url=True):
+        for tag in self.item.find_all(url=True):
             urls_list.append(tag["url"])
         # for tag in self.soup_news.find_all(href=True):  # doesn't work. потытка вынять ссылки из описания гугл
         #     urls_list.append(tag["href"])
@@ -177,13 +214,16 @@ class Novelty:
             "date": self.date,
             "link": self.link,
             "links": self.urls,
+            "source": self.source,
+            "category": self.category,
+            "description": self.description,
         }
-        if self.source:
-            dictionary["source"] = self.source
-        if self.category:
-            dictionary["category"] = self.category
-        if self.description:
-            dictionary["description"] = self.description
+        # if self.source:
+        #     dictionary["source"] = self.source
+        # if self.category:
+        #     dictionary["category"] = self.category
+        # if self.description:
+        #     dictionary["description"] = self.description
         return dictionary
 
 
@@ -193,8 +233,87 @@ def create_json(news_list, limit):
     return json.dumps(news_dictionaries[:limit], ensure_ascii=False, indent=4)
 
 
+def get_date_format(one_news):
+    log.info("Defining date format of news")
+    date_string = one_news.dictionary["date"]
+    try:
+        date_format = "%a, %d %b %Y %H:%M:%S %z"
+        dt.datetime.strptime(date_string, date_format)
+        return date_format
+    except ValueError:
+        pass
+    try:
+        date_format = "%a, %d %b %Y %H:%M:%S %Z"
+        dt.datetime.strptime(date_string, date_format)
+        return date_format
+    except ValueError:
+        pass
+    try:
+        date_format = "%Y-%m-%dT%H:%M:%SZ"
+        dt.datetime.strptime(date_string, date_format)
+        return date_format
+    except ValueError as exc:
+        log.error("Exception occurred 'ValueError'")
+        raise exc
+
+
+def create_dict_by_date(news):
+    log.info("Creating dictionary with news sorted by date")
+    dict_news_by_date = {}
+    date_format = get_date_format(news[0])
+    for one_news in news:
+        date_string = one_news.dictionary["date"]
+        date = dt.datetime.strptime(date_string, date_format)
+        try:
+            dict_news_by_date[date.strftime("%Y%m%d")].append(one_news.dictionary)
+        except KeyError:
+            dict_news_by_date[date.strftime("%Y%m%d")] = [one_news.dictionary]
+    return dict_news_by_date
+
+
+def cache_news(source, news):
+    log.info("News caching by source and date")
+    dict_news_by_date = create_dict_by_date(news)
+    path = get_path(source)
+    if not os.path.isdir(path):
+        log.info(f"Creating directory '{path}' for cache")
+        os.makedirs(path)
+    for date in dict_news_by_date:
+        if not os.path.exists(os.path.join(path, f"{date}.json")):
+            log.info(f"Creating cache file '{date}.json' and caching all parsed news")
+            with open(os.path.join(path, f"{date}.json"), "w") as json_file:
+                json.dump(dict_news_by_date[date], json_file, ensure_ascii=True, indent=4)
+        else:
+            log.info(f"Opening cache file '{date}.json' and deserializing it")
+            with open(os.path.join(path, f"{date}.json"), "r+") as json_file:
+                news_list_from_json = json.load(json_file)
+                json_file.seek(0)
+                log.info("Checking for new parsed news")
+                for index, one_news in enumerate(dict_news_by_date[date]):
+                    if one_news["title"] == news_list_from_json[0]["title"] and index == 0:
+                        log.info("No new news")
+                        break
+                    elif one_news["title"] == news_list_from_json[0]["title"] and index != 0:
+                        log.info(f"Number of new parsed news – {index}. Adding them to cache")
+                        updated_news_list = dict_news_by_date[date][:index] + news_list_from_json
+                        json.dump(updated_news_list, json_file, ensure_ascii=True, indent=4)
+                        break
+                else:
+                    log.info("All parsed news are new. Adding them to cache")
+                    updated_news_list = dict_news_by_date[date] + news_list_from_json
+                    json.dump(updated_news_list, json_file, ensure_ascii=True, indent=4)
+
+
+def deserialize_json(source, date):
+    log.info(f"Deserializing {date}.json")
+    path = get_path(source)
+    with open(os.path.join(path, f"{date}.json"), "r") as json_file:
+        news_list_from_json = json.load(json_file)
+    return news_list_from_json
+
+
 def print_news(news, limit, soup):
-    log.info(f"Printing news: '{limit}'")
+    log.info("Printing news")
     print(f"\nFeed: {soup.find('title').text}")
     for one_news in news[:limit]:
         print("\n", one_news, "\n", sep="")
@@ -202,12 +321,19 @@ def print_news(news, limit, soup):
 
 def main():
     sys.tracebacklimit = 0
-    source, json_converting, verbose, limit = parse_arguments()
+    source, json_converting, verbose, limit, date = parse_arguments()
     global log
     log = create_logger(verbose)
-    log.debug(f"Program received: {source=} {json_converting=} {verbose=} {limit=}")
+    log.debug(f"Program received: {source=} {json_converting=} {verbose=} {limit=} {date=}")
+    if date:
+        if not is_date_valid(date):
+            log.error("Exception occurred 'ValueError'")
+            raise ValueError(f"'{date}' invalid date input. '%Y%m%d' is required")
+        if not is_date(source, date):
+            log.error("Exception occurred 'FileNotFoundError'")
+            raise FileNotFoundError(f"No cached news for '{date}' date")
     response = get_response(source)
-    if not is_successful_response(response.status_code):
+    if not is_response_successful(response.status_code):
         log.error("Exception occurred 'requests.exceptions.HTTPError'")
         raise requests.exceptions.HTTPError(
             f"Request was not successfully processed. Status code = {response.status_code}"
@@ -217,13 +343,19 @@ def main():
         log.error("Exception occurred 'requests.exceptions.InvalidURL'")
         raise requests.exceptions.InvalidURL(f"'{source}' does not contain web feed RSS")
     items = get_items(soup)
-    news_list = create_news(items)
+    news = create_news(items)
     if json_converting:
-        json_news = create_json(news_list, limit)
-        log.info("Print news as JSON")
+        json_news = create_json(news, limit)
+        log.info("Printing news as JSON")
         print(json_news)
-    else:
-        print_news(news_list, limit, soup)
+    elif not date:
+        cache_news(source, news)
+        print_news(news, limit, soup)
+    elif date:
+        cache_news(source, news)
+        list_of_news_dict = deserialize_json(source, date)
+        cached_news = create_news(list_of_news_dict)
+        print_news(cached_news, limit, soup)
 
 
 if __name__ == "__main__":
