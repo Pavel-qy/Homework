@@ -13,26 +13,28 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Pure Python command-line RSS reader.")
     parser.add_argument(
         "source",
+        nargs="?",
+        default=None,
         help="RSS URL"
     )
     parser.add_argument(
         "--version",
         action="version",
         version=f"'Version 0.3.0'",
-        help="prints version info"
+        help="print version info"
     )
     parser.add_argument(
         "--json",
         action="store_true",
         default=False,
-        help="prints result as JSON in stdout",
+        help="print result as JSON in stdout",
         dest="json_converting"
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
         default=False,
-        help="outputs verbose status message",
+        help="output verbose status message",
         dest="verbose"
     )
     parser.add_argument(
@@ -45,7 +47,7 @@ def parse_arguments():
     parser.add_argument(
         "--date",
         default=None,
-        help="prints cached news for specified date"
+        help="print cached news for specified date"
     )
     args = parser.parse_args()
     return args.source, args.json_converting, args.verbose, args.limit, args.date
@@ -74,13 +76,24 @@ def is_date_valid(date):
 
 
 def get_path(source):
-    log.info("Getting path of directories")
+    log.info("Getting path of directory")
     return os.path.join("cache", re.findall(r"(?<=//)\S+?(?=/)", source)[0])
 
 
 def is_date(source, date):
-    path = get_path(source)
-    return os.path.exists(os.path.join(path, f"{date}.json"))
+    log.info(f"Checking for cached news for '{date}' date")
+    if source:
+        path = get_path(source)
+        return os.path.exists(os.path.join(path, f"{date}.json"))
+    elif source is None:
+        if not os.path.isdir("cache"):
+            return False
+        cache_dirs = list(os.walk("cache"))[0][1]
+        for directory in cache_dirs:
+            if os.path.exists(os.path.join("cache", directory, f"{date}.json")):
+                return True
+        else:
+            return False
 
 
 def get_response(source):
@@ -92,7 +105,7 @@ def get_response(source):
         raise exc
     except requests.ConnectionError:
         log.error("Exception occurred 'requests.ConnectionError'")
-        raise requests.ConnectionError(f"URL '{source}' does not exist")  # выводит слишком крупное сообщение
+        raise requests.ConnectionError(f"URL '{source}' does not exist")
     return response
 
 
@@ -130,6 +143,23 @@ def create_news(objects_list):
             news.append(one_news)
     log.info(f"Number of objects: '{len(news)}'")
     return news
+
+
+def get_news(response):
+    if not is_response_successful(response.status_code):
+        log.error("Exception occurred 'requests.exceptions.HTTPError'")
+        print(requests.exceptions.HTTPError(
+            f"Request was not successfully processed. Status code = {response.status_code}"
+        ))
+        return
+    soup = get_soup(response)
+    if not is_rss(soup):
+        log.error("Exception occurred 'requests.exceptions.InvalidURL'")
+        print(requests.exceptions.InvalidURL("Source does not contain web feed RSS"))
+        return
+    items = get_items(soup)
+    title = soup.find('title').text
+    return create_news(items), title
 
 
 class Novelty:
@@ -306,21 +336,24 @@ def cache_news(source, news):
 
 def deserialize_json(source, date):
     log.info(f"Deserializing {date}.json")
-    path = get_path(source)
+    if "/" in source:
+        path = get_path(source)
+    else:
+        path = os.path.join("cache", source)
     with open(os.path.join(path, f"{date}.json"), "r") as json_file:
         news_list_from_json = json.load(json_file)
     return news_list_from_json
 
 
-def print_news(news, limit, soup):
+def print_news(news, limit, title):
     log.info("Printing news")
-    print(f"\nFeed: {soup.find('title').text}")
+    print(f"\nFeed: {title}")
     for one_news in news[:limit]:
         print("\n", one_news, "\n", sep="")
 
 
 def main():
-    sys.tracebacklimit = 0
+    # sys.tracebacklimit = 0
     source, json_converting, verbose, limit, date = parse_arguments()
     global log
     log = create_logger(verbose)
@@ -332,30 +365,38 @@ def main():
         if not is_date(source, date):
             log.error("Exception occurred 'FileNotFoundError'")
             raise FileNotFoundError(f"No cached news for '{date}' date")
-    response = get_response(source)
-    if not is_response_successful(response.status_code):
-        log.error("Exception occurred 'requests.exceptions.HTTPError'")
-        raise requests.exceptions.HTTPError(
-            f"Request was not successfully processed. Status code = {response.status_code}"
-        )
-    soup = get_soup(response)
-    if not is_rss(soup):
-        log.error("Exception occurred 'requests.exceptions.InvalidURL'")
-        raise requests.exceptions.InvalidURL(f"'{source}' does not contain web feed RSS")
-    items = get_items(soup)
-    news = create_news(items)
-    if json_converting:
-        json_news = create_json(news, limit)
-        log.info("Printing news as JSON")
-        print(json_news)
-    elif not date:
-        cache_news(source, news)
-        print_news(news, limit, soup)
-    elif date:
-        cache_news(source, news)
-        list_of_news_dict = deserialize_json(source, date)
-        cached_news = create_news(list_of_news_dict)
-        print_news(cached_news, limit, soup)
+    if source:
+        response = None
+        try:
+            response = get_response(source)
+        except requests.exceptions.ConnectionError:
+            log.error("Exception occurred 'requests.exceptions.ConnectionError'")
+            print(requests.exceptions.ConnectionError("Failed to establish connection"))
+        if response:
+            news, title = get_news(response)
+            if json_converting:
+                json_news = create_json(news, limit)
+                log.info("Printing news as JSON")
+                print(json_news)
+            elif news and not date:
+                cache_news(source, news)
+                print_news(news, limit, title)
+            elif news and date:
+                cache_news(source, news)
+                list_of_news_dict = deserialize_json(source, date)
+                cached_news = create_news(list_of_news_dict)
+                print_news(cached_news, limit, title)
+        elif date and response is None:
+            list_of_news_dict = deserialize_json(source, date)
+            cached_news = create_news(list_of_news_dict)
+            print_news(cached_news, limit, source)
+    elif date and source is None:
+        cache_dirs = list(os.walk("cache"))[0][1]
+        for directory in cache_dirs:
+            if os.path.exists(os.path.join("cache", directory, f"{date}.json")):
+                list_of_news_dict = deserialize_json(directory, date)
+                cached_news = create_news(list_of_news_dict)
+                print_news(cached_news, limit, directory)
 
 
 if __name__ == "__main__":
