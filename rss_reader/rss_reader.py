@@ -7,6 +7,7 @@ import os
 import re
 import datetime as dt
 from bs4 import BeautifulSoup, element
+from fpdf import FPDF
 
 
 def parse_arguments():
@@ -15,42 +16,54 @@ def parse_arguments():
         "source",
         nargs="?",
         default=None,
-        help="RSS URL"
+        help="RSS URL",
     )
     parser.add_argument(
         "--version",
         action="version",
         version=f"'Version 0.3.0'",
-        help="print version info"
+        help="print version info",
     )
     parser.add_argument(
         "--json",
         action="store_true",
         default=False,
         help="print result as JSON in stdout",
-        dest="json_converting"
+        dest="json_print",
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
         default=False,
         help="output verbose status message",
-        dest="verbose"
+        dest="verbose",
     )
     parser.add_argument(
         "--limit",
         default=None,
         type=int,
         help="limit news topics if this parameter provided",
-        dest="limit"
+        dest="limit",
     )
     parser.add_argument(
         "--date",
         default=None,
-        help="print cached news for specified date"
+        help="print cached news for specified date",
+    )
+    parser.add_argument(
+        "--to-html",
+        default=None,
+        help="convert news to html and save to specified path",
+        dest="to_html",
+    )
+    parser.add_argument(
+        "--to-pdf",
+        default=None,
+        help="convert news to pdf and save to specified path",
+        dest="to_pdf",
     )
     args = parser.parse_args()
-    return args.source, args.json_converting, args.verbose, args.limit, args.date
+    return args.source, args.json_print, args.verbose, args.limit, args.date, args.to_html, args.to_pdf
 
 
 def create_logger(verbose):
@@ -103,9 +116,10 @@ def get_response(source):
     except requests.exceptions.MissingSchema as exc:
         log.error("Exception occurred 'requests.exceptions.MissingSchema'")
         raise exc
-    except requests.ConnectionError:
-        log.error("Exception occurred 'requests.ConnectionError'")
-        raise requests.ConnectionError(f"URL '{source}' does not exist")
+    except requests.exceptions.ConnectionError:
+        log.error("Exception occurred 'requests.exceptions.ConnectionError'")
+        print(requests.exceptions.ConnectionError("Failed to establish connection"))
+        return
     return response
 
 
@@ -116,12 +130,12 @@ def is_response_successful(status_code):
 
 
 def get_soup(response):
-    log.info("Making the soup with 'lxml-xml'")
+    log.info("Making soup with 'lxml-xml'")
     return BeautifulSoup(response.text, "lxml-xml")
 
 
 def is_rss(soup):
-    log.info("Checking if the soup contains 'RSS'")
+    log.info("Checking if soup contains 'RSS'")
     return bool(soup.find("rss"))
 
 
@@ -151,12 +165,12 @@ def get_news(response):
         print(requests.exceptions.HTTPError(
             f"Request was not successfully processed. Status code = {response.status_code}"
         ))
-        return
+        return None, None
     soup = get_soup(response)
     if not is_rss(soup):
         log.error("Exception occurred 'requests.exceptions.InvalidURL'")
         print(requests.exceptions.InvalidURL("Source does not contain web feed RSS"))
-        return
+        return None, None
     items = get_items(soup)
     title = soup.find('title').text
     return create_news(items), title
@@ -172,6 +186,7 @@ class Novelty:
             self.category = self.scrape_category()
             self.date = self.scrape_date()
             self.source = self.scrape_source()
+            self.enclosure = self.scrape_enclosure()
             self.urls = self.scrape_urls()
             self.dictionary = self.create_dictionary()
         elif kwargs:
@@ -181,6 +196,7 @@ class Novelty:
             self.category = kwargs["category"]
             self.date = kwargs["date"]
             self.source = kwargs["source"]
+            self.enclosure = kwargs["enclosure"]
             self.urls = kwargs["links"]
 
     def __str__(self):
@@ -200,10 +216,16 @@ class Novelty:
         return result
 
     def scrape_title(self):
-        return self.item.find("title").text
+        title = self.item.find("title")
+        if title:
+            return title.text
+        return
 
     def scrape_link(self):
-        return self.item.find("link").text
+        link = self.item.find("link")
+        if link:
+            return link.text
+        return
 
     def scrape_description(self):
         description = self.item.find("description")
@@ -230,37 +252,38 @@ class Novelty:
             return source.text
         return
 
+    def scrape_enclosure(self):
+        tag_names = ["enclosure", "media:content", "media:thumbnail"]
+        for tag in tag_names:
+            if self.item.find(tag):
+                return self.item.find(tag)["url"]
+        return
+
     def scrape_urls(self):
         urls_list = [self.link]
         for tag in self.item.find_all(url=True):
             urls_list.append(tag["url"])
-        # for tag in self.soup_news.find_all(href=True):  # doesn't work. потытка вынять ссылки из описания гугл
-        #     urls_list.append(tag["href"])
         return urls_list
 
     def create_dictionary(self):
         dictionary = {
             "title": self.title,
-            "date": self.date,
             "link": self.link,
-            "links": self.urls,
-            "source": self.source,
-            "category": self.category,
             "description": self.description,
+            "category": self.category,
+            "date": self.date,
+            "source": self.source,
+            "enclosure": self.enclosure,
+            "links": self.urls,
         }
-        # if self.source:
-        #     dictionary["source"] = self.source
-        # if self.category:
-        #     dictionary["category"] = self.category
-        # if self.description:
-        #     dictionary["description"] = self.description
         return dictionary
 
 
-def create_json(news_list, limit):
+def print_json(news, limit):
     log.info("Converting news to JSON")
-    news_dictionaries = [one_news.dictionary for one_news in news_list]
-    return json.dumps(news_dictionaries[:limit], ensure_ascii=False, indent=4)
+    news_dictionaries = [one_news.dictionary for one_news in news]
+    log.info("Printing news as JSON")
+    print(json.dumps(news_dictionaries[:limit], ensure_ascii=False, indent=4))
 
 
 def get_date_format(one_news):
@@ -334,6 +357,135 @@ def cache_news(source, news):
                     json.dump(updated_news_list, json_file, ensure_ascii=True, indent=4)
 
 
+def get_image(url):  # asdf############################################################################################
+    log.info("Getting image and file format")
+    response = get_response(url)
+    if response:
+        file_format = response.headers["Content-Type"].split("/")[1]
+        with open("temp", "wb") as image:
+            image.write(response.content)
+        return file_format
+    return
+
+
+def get_filename(source, date):
+    log.info("Getting name for file")
+    if date:
+        filename = re.findall(r"(?<=//)\S+?(?=/)", source)[0].replace(".", "_") + "_" + date
+    else:
+        filename = re.findall(r"(?<=//)\S+?(?=/)", source)[0].replace(".", "_")
+    return filename
+
+
+def convert_to_html(path, news, limit, title, source, date=None):
+    log.info("Converting news to html format")
+    with open(os.path.join("templates", "template.html"), encoding="utf-8") as template:
+        html_template = template.read()
+    soup = BeautifulSoup(html_template, "lxml")
+    soup.title.append(title)
+    soup.body.append(soup.new_tag("h1"))
+    soup.h1.append(title)
+    for i, one_news in enumerate(news[:limit]):
+        soup.body.append(soup.new_tag("div", id=i))
+        if one_news.dictionary["enclosure"]:
+            soup.find("div", id=i).append(soup.new_tag("img", attrs={
+                "class": "enclosure",
+                "src": one_news.dictionary["enclosure"],
+            }))
+            soup.find("div", id=i).img.wrap(soup.new_tag("a", href=one_news.dictionary["link"], target="_blank"))
+        if one_news.dictionary["title"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "title"}))
+            soup.find("div", id=i).find("p", attrs={"class": "title"}).append(one_news.dictionary["title"])
+        if one_news.dictionary["date"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "date"}))
+            soup.find("div", id=i).find("p", attrs={"class": "date"}).append(one_news.dictionary["date"])
+        if one_news.dictionary["category"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "category"}))
+            soup.find("div", id=i).find("p", attrs={"class": "category"}).append(one_news.dictionary["category"])
+        if one_news.dictionary["source"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "source"}))
+            soup.find("div", id=i).find("p", attrs={"class": "source"}).append(one_news.dictionary["source"])
+        if one_news.dictionary["link"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "link"}))
+            soup.find("div", id=i).find("p", attrs={"class": "link"}).append(one_news.dictionary["link"])
+            soup.find("div", id=i).find("p", attrs={"class": "link"}).wrap(soup.new_tag("a", href=one_news.dictionary["link"], target="_blank"))
+        if one_news.dictionary["description"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "description"}))
+            soup.find("div", id=i).find("p", attrs={"class": "description"}).append(
+                one_news.dictionary["description"]
+            )
+        if one_news.dictionary["links"]:
+            soup.find("div", id=i).append(soup.new_tag("p", attrs={"class": "links"}))
+            for j, link in enumerate(one_news.dictionary["links"]):
+                soup.find("div", id=i).find("p", attrs={"class": "links"}).append(soup.new_tag("a", id=j, href=link, target="_blank"))
+                soup.find("div", id=i).find("p", attrs={"class": "links"}).find("a", id=j).append(link)
+                soup.find("div", id=i).find("p", attrs={"class": "links"}).append(soup.new_tag("br"))
+
+        # for key in one_news.dictionary:
+        #     if key == "enclosure":
+        #         soup.find("div", id=index).append(soup.new_tag("img", attrs={"class": key}))
+        #     elif one_news.dictionary[key]:
+        #         soup.find("div", id=index).append(soup.new_tag("p", attrs={"class": key}))
+        # tags = soup.find("div", id=index).contents
+        # for tag in tags:
+        #     if tag["class"][0] == "enclosure":
+        #         tag.attrs["src"] = one_news.dictionary["enclosure"]
+        #     elif isinstance(one_news.dictionary[tag["class"][0]], list):
+        #         for value in one_news.dictionary[tag["class"][0]]:
+        #             tag.append(value)
+        #             tag.append(soup.new_tag("br"))
+        #     else:
+        #         tag.append(one_news.dictionary[tag["class"][0]])
+
+    if not os.path.isdir(path):
+        log.info(f"Creating directory '{path}' for html files)")
+        os.makedirs(path)
+    filename = get_filename(source, date)
+    with open(os.path.join(path, f"{filename}.html"), "w", encoding="utf-8") as html_file:
+        html_file.write(soup.prettify())
+
+
+# def convert_to_pdf(path, news, limit, title, source, date=None):
+#     log.info("Converting news to pdf format")
+#     if not os.path.isdir(path):
+#         log.info(f"Creating directory '{path}' for pdf files")
+#         os.makedirs(path)
+#     pdf = FPDF()
+#     pdf.add_page()
+#     pdf.add_font("Arial", fname=os.path.join("fonts", "arial.ttf"), uni=True)
+#     pdf.set_font("Arial", size=14)
+#     pdf.write(h=16, txt=title, link=source)
+#     pdf.cell(0, 8)
+#     for one_news in news[:limit]:
+#         if one_news.dictionary["enclosure"]:
+#             file_format = get_image(one_news.dictionary["enclosure"])
+#             if file_format:
+#                 pdf.image("temp", h=60, type=file_format, link=one_news.dictionary["enclosure"])
+#             elif file_format is None:
+#                 pdf.write(0, txt=one_news.dictionary["enclosure"][:50] + "...", link=one_news.dictionary["enclosure"])
+#         if one_news.dictionary["title"]:
+#             pdf.write(0, txt=one_news.dictionary["title"])
+#         if one_news.dictionary["source"]:
+#             pdf.write(0, txt=one_news.dictionary["source"])
+#         if one_news.dictionary["date"]:
+#             pdf.write(0, txt=one_news.dictionary["date"])
+#         if one_news.dictionary["link"]:
+#             pdf.write(0, txt=one_news.dictionary["link"])
+#         if one_news.dictionary["category"]:
+#             pdf.write(0, txt=one_news.dictionary["category"])
+#         if one_news.dictionary["description"]:
+#             pdf.write(0, txt=one_news.dictionary["description"])
+#         if one_news.dictionary["links"]:
+#             for i, link in enumerate(one_news.dictionary["links"]):
+#                 pdf.write(0, txt=f"[{i + 1}] {link[:50]}", link=link)
+#     filename = get_filename(source, date)
+#     log.info(f"Saving pdf file to '{path}'")
+#     pdf.output(name=os.path.join(path, f"{filename}.pdf"), dest="F")
+#     if os.path.exists("temp"):
+#         log.info("Delete temporary image file")
+#         os.remove("temp")
+
+
 def deserialize_json(source, date):
     log.info(f"Deserializing {date}.json")
     if "/" in source:
@@ -354,10 +506,10 @@ def print_news(news, limit, title):
 
 def main():
     # sys.tracebacklimit = 0
-    source, json_converting, verbose, limit, date = parse_arguments()
+    source, json_print, verbose, limit, date, to_html, to_pdf = parse_arguments()
     global log
     log = create_logger(verbose)
-    log.debug(f"Program received: {source=} {json_converting=} {verbose=} {limit=} {date=}")
+    log.debug(f"Program received: {source=} {json_print=} {verbose=} {limit=} {date=}")
     if date:
         if not is_date_valid(date):
             log.error("Exception occurred 'ValueError'")
@@ -366,37 +518,44 @@ def main():
             log.error("Exception occurred 'FileNotFoundError'")
             raise FileNotFoundError(f"No cached news for '{date}' date")
     if source:
-        response = None
-        try:
-            response = get_response(source)
-        except requests.exceptions.ConnectionError:
-            log.error("Exception occurred 'requests.exceptions.ConnectionError'")
-            print(requests.exceptions.ConnectionError("Failed to establish connection"))
+        response = get_response(source)
         if response:
             news, title = get_news(response)
-            if json_converting:
-                json_news = create_json(news, limit)
-                log.info("Printing news as JSON")
-                print(json_news)
-            elif news and not date:
+            if news and not date:
                 cache_news(source, news)
-                print_news(news, limit, title)
+                if to_html:
+                    if json_print:
+                        print_json(news, limit)
+                    convert_to_html(to_html, news, limit, title, source, date)
+                elif json_print:
+                    print_json(news, limit)
+                elif not json_print:
+                    print_news(news, limit, title)
             elif news and date:
                 cache_news(source, news)
                 list_of_news_dict = deserialize_json(source, date)
                 cached_news = create_news(list_of_news_dict)
-                print_news(cached_news, limit, title)
+                if json_print:
+                    print_json(cached_news, limit)
+                elif not json_print:
+                    print_news(cached_news, limit, title)
         elif date and response is None:
             list_of_news_dict = deserialize_json(source, date)
             cached_news = create_news(list_of_news_dict)
-            print_news(cached_news, limit, source)
+            if json_print:
+                print_json(cached_news, limit)
+            elif not json_print:
+                print_news(cached_news, limit, source)
     elif date and source is None:
         cache_dirs = list(os.walk("cache"))[0][1]
         for directory in cache_dirs:
             if os.path.exists(os.path.join("cache", directory, f"{date}.json")):
                 list_of_news_dict = deserialize_json(directory, date)
                 cached_news = create_news(list_of_news_dict)
-                print_news(cached_news, limit, directory)
+                if json_print:
+                    print_json(cached_news, limit)
+                elif not json_print:
+                    print_news(cached_news, limit, directory)
 
 
 if __name__ == "__main__":
