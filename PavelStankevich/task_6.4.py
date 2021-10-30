@@ -32,8 +32,9 @@ class NonFlyingBird(FlyingBird):
     def swim(self):
         print(f"{self.name} bird can swim")
     
-    def fly(self):
-        raise AttributeError(f"'{self.name}' object has no attribute 'fly'")
+    def __getattribute__(self, name):
+        if name == "fly":
+            raise AttributeError(f"'{self.name}' object has no attribute 'fly'")
   
     def eat(self):
         print(f"It eats {self.ration}")
@@ -50,7 +51,7 @@ print()
 
 p = NonFlyingBird("Penguin", "fish")
 p.swim()
-# p.fly()
+p.fly()
 p.eat()
 print()
 
