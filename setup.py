@@ -10,6 +10,7 @@ requirements = [
     "requests",
     "bs4",
     "lxml",
+    "xhtml2pdf",
 ]
 
 setuptools.setup(
@@ -22,6 +23,7 @@ setuptools.setup(
     packages=["rss_reader"],
     install_requires=requirements,
     python_requires=">=3.9",
+    include_package_data=True,
     entry_points={
         "console_scripts": ["rss_reader = rss_reader.rss_reader:main"]
     }

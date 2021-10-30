@@ -3,9 +3,17 @@
     <meta charset="UTF-8">
     <title></title>
     <style>
+        @page {
+            @frame content_frame {
+            left: 50pt;
+            right: 50pt;
+            top: 50pt;
+            bottom: 50pt;
+        }
+        }
         body {
             font-family: DejaVuSans;
-            font-size: small;
+            font-size: 125%;
         }
         div {
             page-break-after: always;
@@ -18,6 +26,13 @@
         }
         p.link {
             -pdf-word-wrap: CJK;
+        }
+        p.links {
+            margin-bottom: auto;
+        }
+        p.list {
+            margin-top: auto;
+            margin-bottom: auto;
         }
     </style>
 </head>
