@@ -1,4 +1,9 @@
 # Task 6.2
+#
+# Implement custom dictionary that will memorize 10 latest changed keys.
+# Using method "get_history" return this keys.
+
+
 class HistoryDict:
     """
     Custom dictionary that memorize 10 latest changed keys.
