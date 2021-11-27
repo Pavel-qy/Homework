@@ -93,12 +93,12 @@ class TestIsRss(unittest.TestCase):
     def test_soup_with_rss(self):
         soup = bs4.BeautifulSoup("<rss version='2.0' xmlns:'atom=http://www.w3.org/2005/Atom'>", "lxml-xml")
         result = rss_reader.is_rss(soup)
-        self.assertEqual(result, True)
+        self.assertEqual(result, None)
 
     def test_soup_without_rss(self):
         soup = bs4.BeautifulSoup("<html lang='ru'>", "lxml-xml")
-        result = rss_reader.is_rss(soup)
-        self.assertEqual(result, False)
+        with self.assertRaises(requests.exceptions.InvalidURL):
+            rss_reader.is_rss(soup)
 
 
 class TestGetItems(unittest.TestCase):

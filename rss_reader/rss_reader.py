@@ -51,7 +51,7 @@ def parse_arguments():
     parser.add_argument(
         "--version",
         action="version",
-        version=f"'Version 0.4.1'",
+        version=f"'Version 0.4.2'",
         help="print version info",
     )
     parser.add_argument(
@@ -262,20 +262,20 @@ def get_soup(response: requests.models.Response) -> BeautifulSoup:
     return BeautifulSoup(response.text, "lxml-xml")
 
 
-def is_rss(soup: BeautifulSoup) -> bool:
+def is_rss(soup: BeautifulSoup):
     """
     Gets the 'BeautifulSoup' object and looking for the 'rss' tag.
 
     :param soup : BeautifulSoup
         an 'BeautifulSoup' object obtained by parsing 'response.text'
 
-    :return True
-        if the soup contains 'rss' tag
-    :return False
-        if the soup does not contain 'rss' tag
+    :raise requests.exceptions.InvalidURL
+        if soup does not contain 'RSS' tag
     """
     log.info("Checking if soup contains 'RSS'")
-    return bool(soup.find("rss"))
+    if not bool(soup.find("rss")):
+        log.error("Exception occurred 'requests.exceptions.InvalidURL'")
+        raise requests.exceptions.InvalidURL("Source does not contain web feed RSS")
 
 
 def get_items(soup: BeautifulSoup) -> list:
@@ -540,7 +540,7 @@ def create_news(objects_list: list) -> list:
     return news
 
 
-def get_news(response: requests.models.Response) -> (None, None) or (list, str):
+def get_news(response: requests.models.Response) -> (list, str):
     """
     Gets a response and calls a function to check the status code and
     calls the function to check if the response contains 'rss' tag.
@@ -548,19 +548,12 @@ def get_news(response: requests.models.Response) -> (None, None) or (list, str):
     :param response : requests.models.Response
         retrieved data from the server
 
-    :return (None, None)
-        if the status code is not successful
-    :return (None, None)
-        if the soup does not contain 'rss'
     :return (list, title : str)
         a list of 'Novelty' objects and string with the title of feed
     """
     log.info("Creating news if the response contains 'RSS' tag")
     soup = get_soup(response)
-    if not is_rss(soup):
-        log.error("Exception occurred 'requests.exceptions.InvalidURL'")
-        print(requests.exceptions.InvalidURL("Source does not contain web feed RSS"))
-        return None, None
+    is_rss(soup)
     items = get_items(soup)
     title = soup.find('title').text
     return create_news(items), title
@@ -658,7 +651,7 @@ def cache_images(news: list, path: str, filename: str) -> list:
     return news
 
 
-def cache_news(source: str, news: list):
+def cache_news(directory: str, news: list):
     """
     Gets a list of 'Novelty' objects, creates a directory for cache files.
     Runs a loop that checks if there is no cache file – creates it
@@ -666,15 +659,14 @@ def cache_news(source: str, news: list):
     it compares the dictionaries from the cache file and from the dictionary
     by title and adds new ones. If there are no matches, it adds all news dictionaries.
 
-    :param source : str
-        the 'source' parameter from the command line
+    :param directory : str
+        the name of the directory of cache files
 
     :param news : list
         a list of 'Novelty' objects
     """
     log.info("Caching news")
     news_dict = create_news_dict(news)
-    directory = get_directory(source)
     path = os.path.join("cache", directory)
     if not os.path.isdir(path):
         log.info(f"Creating directory '{path}' for cache")
@@ -952,28 +944,26 @@ def main():
         is_date_valid(date)
     if source:
         response = get_response(source)
-        if not response and not date:
-            log.error("Exception occurred 'RuntimeError'")
-            raise RuntimeError(f"Failed to get news from '{source}'")
-        elif response:
-            news, title = get_news(response)
-        else:
-            news, title = None, None
         directory = get_directory(source)
         filename = get_filename(directory, date)
-        if news and not date:
+        if response:
+            news, title = get_news(response)
+            cache_news(directory, news)
+            if date:
+                is_file(directory, filename)
+                cached_news_dicts = get_cached_news(directory, filename)
+                news = create_news(cached_news_dicts)
             process_output(json_print, to_pdf, to_html, filename, news[:limit], title)
-            cache_news(source, news)
         elif date:
             is_file(directory, filename)
-            if not news and not title:
-                title = filename
-            elif news and title:
-                cache_news(source, news)
+            title = filename
             cached_news_dicts = get_cached_news(directory, filename)
             cached_news = create_news(cached_news_dicts)
             process_output(json_print, to_pdf, to_html, filename, cached_news[:limit], title)
-    elif date and source is None:
+        else:
+            log.error("Exception occurred 'RuntimeError'")
+            raise RuntimeError(f"Failed to get news from '{source}'")
+    elif date:
         log.info("Getting list of cache directories")
         cache_dirs = list(os.walk("cache"))[0][1]
         flag = True
