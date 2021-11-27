@@ -190,7 +190,7 @@ class TestCreateNewsDict(unittest.TestCase):
 class TestPrintJson(unittest.TestCase):
     @patch("builtins.print")
     def test_objects_news(self, mock_print):
-        mock_one_news = Mock
+        mock_one_news = Mock()
         mock_one_news.dictionary = {
             "date": "date_item",
             "title": "title_item",
@@ -209,29 +209,6 @@ class TestPrintJson(unittest.TestCase):
         rss_reader.print_json(news)
         list_dicts = [mock_one_news.dictionary]
         mock_print.assert_called_with(json.dumps(list_dicts, ensure_ascii=False, indent=4))
-
-
-# class TestPrintNews(unittest.TestCase):
-#     @patch("builtins.print")
-#     def test_objects_news(self, mock_print):
-#         mock_one_news = Mock()
-#         # mock_one_news.__class__ = rss_reader.Novelty
-#         mock_one_news.date = "date_item"
-#         mock_one_news.title = "title_item"
-#         mock_one_news.link = "link_item"
-#         mock_one_news.links = ["links_item", "links_item", "links_item"]
-#         mock_one_news.source = "date_item"
-#         mock_one_news.category = "date_item"
-#         mock_one_news.enclosure = "date_item"
-#         mock_one_news.description = "date_item"
-#         mock_one_news.__str__ = (
-#             mock_one_news.date + mock_one_news.title + mock_one_news.link + mock_one_news.links[0] +
-#             mock_one_news.source + mock_one_news.category + mock_one_news.enclosure + mock_one_news.description
-#         )
-#         news = [mock_one_news]
-#         title = "Test"
-#         rss_reader.print_news(news, title)
-#         mock_print.assert_called_with("\nFeed: Test\nDate: date_item\nLink: link_item\n\nLinks:\n[1]: links_item\n[2]: links_item\n[3]: links_item")
 
 
 if __name__ == "__main__":

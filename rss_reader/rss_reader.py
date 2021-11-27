@@ -139,6 +139,25 @@ def is_date_valid(date: str) -> bool:
         raise ValueError(f"'{date}' invalid date input. '%Y%m%d' is required")
 
 
+def is_response_successful(status_code: int) -> bool:
+    """
+    Gets the status code and checks if the response status code successful.
+
+    :param status_code : int
+        status code of the received response from the server
+
+    :return True
+        if the number is greater than 199 and less than 300
+    :return False
+        if the number is less than 199 and more than 300
+    """
+    log.info(f"Checking status code '{status_code}'")
+    if 199 < status_code < 300:
+        return True
+    else:
+        return False
+
+
 def get_response(source: str) -> requests.models.Response or None:
     """
     Gets url, send GET request and stores in variable 'response'.
@@ -149,11 +168,14 @@ def get_response(source: str) -> requests.models.Response or None:
     :return response : requests.models.Response
         retrieved data from the server
 
+    :return None
+        if it is impossible to connect to the server
+
+    :return None
+        if response status code is not valid
+
     :raise requests.exceptions.MissingSchema
         an error if 'source' is incorrect url
-
-    :raise requests.exceptions.ConnectionError
-        an error if it is impossible to connect to the server
     """
     log.info(f"Getting data from '{source}'")
     try:
@@ -164,6 +186,12 @@ def get_response(source: str) -> requests.models.Response or None:
     except requests.exceptions.ConnectionError:
         log.error("Exception occurred 'requests.exceptions.ConnectionError'")
         print(requests.exceptions.ConnectionError("Failed to establish connection"))
+        return
+    if not is_response_successful(response.status_code):
+        log.error("Exception occurred 'requests.exceptions.HTTPError'")
+        print(requests.exceptions.HTTPError(
+            f"Request was not successfully processed. Status code = '{response.status_code}'"
+        ))
         return
     return response
 
@@ -217,26 +245,7 @@ def is_file(directory: str, filename: str):
     log.info(f"Checking if there is cache file '{filename}'")
     if not os.path.exists(os.path.join("cache", directory, f"{filename}.json")):
         log.error("Exception occurred 'FileNotFoundError'")
-        raise FileNotFoundError(f"File not found '{filename}.json'")
-
-
-def is_response_successful(status_code: int) -> bool:
-    """
-    Gets the status code and checks if the response status code successful.
-
-    :param status_code : int
-        status code of the received response from the server
-
-    :return True
-        if the number is greater than 199 and less than 300
-    :return False
-        if the number is less than 199 and more than 300
-    """
-    log.info(f"Checking status code '{status_code}'")
-    if 199 < status_code < 300:
-        return True
-    else:
-        return False
+        raise FileNotFoundError(f"There is no cache news for '{filename}'")
 
 
 def get_soup(response: requests.models.Response) -> BeautifulSoup:
@@ -546,13 +555,7 @@ def get_news(response: requests.models.Response) -> (None, None) or (list, str):
     :return (list, title : str)
         a list of 'Novelty' objects and string with the title of feed
     """
-    log.info("Creating news if the response is successful and valid")
-    if not is_response_successful(response.status_code):
-        log.error("Exception occurred 'requests.exceptions.HTTPError'")
-        print(requests.exceptions.HTTPError(
-            f"Request was not successfully processed. Status code = {response.status_code}"
-        ))
-        return None, None
+    log.info("Creating news if the response contains 'RSS' tag")
     soup = get_soup(response)
     if not is_rss(soup):
         log.error("Exception occurred 'requests.exceptions.InvalidURL'")
@@ -837,7 +840,7 @@ def create_pdf(soup: BeautifulSoup, path: str, filename: str, data_path: str):
 
 def convert_to(path: str, file_format: str, news: list, filename: str, title: str):
     """
-    Converts news to 'pdf' or html 'format'
+    Converts news to 'pdf' or 'html' format
 
     :param path : str
         directory path for 'pdf' or 'html' files
@@ -944,26 +947,29 @@ def main():
     source, json_print, verbose, limit, date, to_pdf, to_html = parse_arguments()
     global log
     log = create_logger(verbose)
-    log.debug(f"Program received: {source=} {json_print=} {verbose=} {limit=} {date=}")
+    log.debug(f"Program received: {source=} {json_print=} {verbose=} {limit=} {date=} {to_pdf=} {to_html=}")
     if date:
         is_date_valid(date)
     if source:
         response = get_response(source)
-        directory = get_directory(source)
-        filename = get_filename(directory, date)
-        if response:
+        if not response and not date:
+            log.error("Exception occurred 'RuntimeError'")
+            raise RuntimeError(f"Failed to get news from '{source}'")
+        elif response:
             news, title = get_news(response)
         else:
             news, title = None, None
+        directory = get_directory(source)
+        filename = get_filename(directory, date)
         if news and not date:
             process_output(json_print, to_pdf, to_html, filename, news[:limit], title)
             cache_news(source, news)
         elif date:
-            if title is None:
-                title = filename
-            elif news:
-                cache_news(source, news)
             is_file(directory, filename)
+            if not news and not title:
+                title = filename
+            elif news and title:
+                cache_news(source, news)
             cached_news_dicts = get_cached_news(directory, filename)
             cached_news = create_news(cached_news_dicts)
             process_output(json_print, to_pdf, to_html, filename, cached_news[:limit], title)
